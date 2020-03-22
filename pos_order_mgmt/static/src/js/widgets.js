@@ -63,7 +63,10 @@ odoo.define('pos_order_mgmt.widgets', function (require) {
 
         show: function () {
             var self = this;
-            var previous_screen = this.pos.get_order().get_screen_data('previous-screen');
+            var previous_screen;
+            if (this.pos.get_order()) {
+                previous_screen = this.pos.get_order().get_screen_data('previous-screen');
+            }
             if (previous_screen === 'receipt') {
                 this.gui.screen_instances.receipt.click_next();
                 this.gui.show_screen('orderlist');
@@ -72,7 +75,11 @@ odoo.define('pos_order_mgmt.widgets', function (require) {
             this.renderElement();
             this.old_order = this.pos.get_order();
             this.$('.back').click(function () {
+              if (self.old_order !== null) {
+                self.gui.back();
+              } else {
                 return self.gui.show_screen(self.gui.startup_screen);
+              }
             });
             if (self.orders.length === 0) {
                 this.search_done_orders();
@@ -156,23 +163,15 @@ odoo.define('pos_order_mgmt.widgets', function (require) {
             // taxes based on fiscal position
             this.pos.current_order = this.pos.get_order()
             this.pos.set_order(order);
-            if (this.pos.config.iface_print_via_proxy) {
-                this.pos.proxy.print_receipt(QWeb.render(
-                    'XmlReceipt', {
-                        receipt: receipt,
-                        widget: this,
-                        pos: this.pos,
-                        order: order,
-                        orderlines: order.get_orderlines(),
-                        paymentlines: order.get_paymentlines(),
-                    }));
-                this.pos.set_order(this.pos.current_order);
-                this.pos.current_order = false;
-            } else {
-                this.pos.reloaded_order = order;
-                this.gui.show_screen('receipt');
-                this.pos.reloaded_order = false;
-            }
+            this.pos.reloaded_order = order;
+            var skip_screen_state = this.pos.config.iface_print_skip_screen;
+            // Disable temporarily skip screen if set
+            this.pos.config.iface_print_skip_screen = false;
+            this.gui.show_screen('receipt');
+            this.pos.reloaded_order = false;
+            // Set skip screen to whatever previous state
+            this.pos.config.iface_print_skip_screen = skip_screen_state;
+
         },
 
         action_return: function (order) {
@@ -247,7 +246,7 @@ odoo.define('pos_order_mgmt.widgets', function (require) {
                     line = line[2];
                 }
                 _.each(self.pos.cashregisters, function (cashregister) {
-                    if (cashregister.id === line.statement_id) {
+                  if (cashregister.journal.id === line.journal_id) {
                         if (line.amount > 0) {
                             // If it is not change
                             order.add_paymentline(cashregister);
@@ -267,7 +266,9 @@ odoo.define('pos_order_mgmt.widgets', function (require) {
                 method: 'load_done_order_for_pos',
                 args: [order_id],
             }).then(function (order_data) {
-                self.gui.back();
+                if (self.old_order !== null) {
+                  self.gui.back();
+                }
                 var correct_order_print = true;
                 if (action === 'return') {
                     order_data.return = true;
@@ -316,6 +317,13 @@ odoo.define('pos_order_mgmt.widgets', function (require) {
                 args: [query || '', this.pos.pos_session.id],
             }).then(function (result) {
                 self.orders = result;
+                // Get the date in local time
+                _.each(self.orders, function (order) {
+                    if (order.date_order) {
+                        order.date_order = moment.utc(order.date_order)
+                            .local().format('YYYY-MM-DD HH:mm:ss');
+                    }
+                });
             }).fail(function (error, event) {
                 if (parseInt(error.code, 10) === 200) {
                     // Business Logic Error, not a connection problem
